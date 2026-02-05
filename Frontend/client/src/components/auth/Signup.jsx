@@ -55,7 +55,7 @@ const Signup = () => {
             navigate('/login'); // redirect after signup
             return 'Account created successfully! Please log in.';
           },
-          error: (err) => err.message || "Signup failed. Please try again."
+          error: (err) => err.msg || err.message || err || "Signup failed. Please try again."
         }
       );
     } catch (error) {
@@ -88,9 +88,8 @@ const Signup = () => {
               placeholder="your.email@example.com"
               autoComplete="email"
               required
-              className={`mt-1 block w-full px-4 py-2 border ${
-                errors.email ? 'border-red-500' : 'border-gray-300'
-              } rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500`}
+              className={`mt-1 block w-full px-4 py-2 border ${errors.email ? 'border-red-500' : 'border-gray-300'
+                } rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500`}
             />
             {errors.email && <p className="mt-1 text-sm text-red-500">{errors.email}</p>}
           </div>
@@ -108,9 +107,8 @@ const Signup = () => {
               placeholder="••••••••"
               autoComplete="new-password"
               required
-              className={`mt-1 block w-full px-4 py-2 border ${
-                errors.password ? 'border-red-500' : 'border-gray-300'
-              } rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500`}
+              className={`mt-1 block w-full px-4 py-2 border ${errors.password ? 'border-red-500' : 'border-gray-300'
+                } rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500`}
             />
             <button
               type="button"
