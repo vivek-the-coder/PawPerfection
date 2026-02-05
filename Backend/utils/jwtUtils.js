@@ -1,0 +1,52 @@
+import jwt from 'jsonwebtoken';
+
+const { sign, verify } = jwt;
+
+// Generate access token (short-lived)
+export const generateAccessToken = (userId) => {
+    return sign({ id: userId }, process.env.JWT_SECRET, {
+        expiresIn: "1d" // 1 day
+    });
+};
+
+// Generate refresh token (long-lived)
+export const generateRefreshToken = (userId) => {
+    return sign({ id: userId }, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, {
+        expiresIn: "7d" // 7 days
+    });
+};
+
+// Verify access token
+export const verifyAccessToken = (token) => {
+    try {
+        return verify(token, process.env.JWT_SECRET);
+    } catch {
+        return null;
+    }
+};
+
+// Verify refresh token
+export const verifyRefreshToken = (token) => {
+    try {
+        return verify(token, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET);
+    } catch {
+        return null;
+    }
+};
+
+// Generate both tokens
+export const generateTokens = (userId) => ({
+    accessToken: generateAccessToken(userId),
+    refreshToken: generateRefreshToken(userId)
+});
+
+// Check if token is expired
+export const isTokenExpired = (token) => {
+    try {
+        const decoded = verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+        const now = Math.floor(Date.now() / 1000);
+        return decoded.exp < now;
+    } catch {
+        return true;
+    }
+};

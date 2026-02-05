@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pawperfection-Deployment
+  labels:
+    app: pawperfection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pawperfection
+  template:
+     metadata:
+      labels: 
+        app: pawperfection
+     spec:
+      containers:
+      - name: pawperfection
+        image: pawperfection:latest
+        ports:
+        - containerPort: 8080

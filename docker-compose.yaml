@@ -1,0 +1,68 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - paw-network
+
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    restart: always
+    networks:
+      - paw-network
+
+
+  backend:
+    image: pawperfection_backend
+    build:
+      context: ./Backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./Backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+    restart: always
+    networks:
+      - paw-network
+
+  frontend:
+    image: pawperfection_frontend
+    build:
+      context: ./Frontend/client
+    ports:
+      - "5173:5173"
+    env_file:
+      - ./Frontend/client/.env
+    depends_on:
+      - backend
+    restart: always
+    networks:
+      - paw-network
+
+volumes:
+  redis-data:
+  mongo-data:
+
+networks:
+  paw-network:
+    driver: bridge
