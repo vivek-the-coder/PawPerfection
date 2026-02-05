@@ -13,15 +13,17 @@ const createTransporter = () => {
     });
 
     return nodemailer.createTransport({
-        service: 'gmail', 
+        service: 'gmail',
         auth: {
-            user: process.env.SMTP_EMAIL, 
-            pass: process.env.SMTP_PASSWORD 
+            user: process.env.SMTP_EMAIL,
+            pass: process.env.SMTP_PASSWORD
         }
     });
 };
 
 console.log("Email service initialized.");
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 // Email templates
 const getConfirmationEmailTemplate = (data) => {
@@ -126,7 +128,7 @@ const getConfirmationEmailTemplate = (data) => {
             <p>You can now access your course content and start your dog training journey with us!</p>
             
             <div style="text-align: center;">
-                <a href="${process.env.FRONTEND_URL}/course/${data.courseId}" class="button">
+                <a href="${FRONTEND_URL}/course/${data.courseId}" class="button">
                     Access Your Course
                 </a>
             </div>
@@ -241,7 +243,7 @@ const getCancellationEmailTemplate = (data) => {
             <p>Unfortunately, your payment could not be processed at this time. This could be due to various reasons such as insufficient funds, card expiration, or network issues.</p>
             
             <div style="text-align: center;">
-                <a href="${process.env.FRONTEND_URL}/courses" class="button">
+                <a href="${FRONTEND_URL}/courses" class="button">
                     Try Again
                 </a>
             </div>
@@ -342,7 +344,7 @@ const getLoginEmailTemplate = (data) => {
             <p>If you did <strong>not</strong> login, please secure your account immediately by resetting your password.</p>
             
             <div style="text-align: center;">
-                <a href="${process.env.FRONTEND_URL}/reset-password" class="button">
+                <a href="${FRONTEND_URL}/reset-password" class="button">
                     Reset Password
                 </a>
             </div>
@@ -357,7 +359,7 @@ const getLoginEmailTemplate = (data) => {
     `;
 };
 const sessionExpiredForPayment = (data) => {
-  return `
+    return `
   <!DOCTYPE html>
   <html>
   <head>
@@ -438,7 +440,7 @@ const sessionExpiredForPayment = (data) => {
           <p>No payment was processed for this order. To complete your purchase, please try again by starting a new session.</p>
           
           <div style="text-align: center;">
-              <a href="${process.env.FRONTEND_URL}/checkout" class="button">
+              <a href="${FRONTEND_URL}/checkout" class="button">
                   Retry Payment
               </a>
           </div>
@@ -459,14 +461,14 @@ const sessionExpiredForPayment = (data) => {
 export const sendPaymentConfirmationEmail = async (data) => {
     try {
         console.log('Attempting to send payment confirmation email to:', data.userEmail);
-        
+
         // Validate required data
         if (!data.userEmail) {
             throw new Error('userEmail is required for payment confirmation');
         }
 
         const transporter = createTransporter();
-        
+
         const mailOptions = {
             from: process.env.SMTP_EMAIL,
             to: data.userEmail,
@@ -497,7 +499,7 @@ export const sendPaymentConfirmationEmail = async (data) => {
 export const sendPaymentCancellationEmail = async (data) => {
     try {
         const transporter = createTransporter();
-        
+
         const mailOptions = {
             from: process.env.SMTP_EMAIL,
             to: data.userEmail,
@@ -517,14 +519,14 @@ export const sendPaymentCancellationEmail = async (data) => {
 export const sendLoginNotificationEmail = async (data) => {
     try {
         console.log('Attempting to send login notification email to:', data.userEmail);
-        
+
         // Validate required data
         if (!data.userEmail) {
             throw new Error('userEmail is required for login notification');
         }
 
         const transporter = createTransporter();
-        
+
         const mailOptions = {
             from: process.env.SMTP_EMAIL,
             to: data.userEmail,
@@ -551,10 +553,10 @@ export const sendLoginNotificationEmail = async (data) => {
     }
 };
 
-export const sendSessionExpiredForPayment = async(data)=>{
-    try{
+export const sendSessionExpiredForPayment = async (data) => {
+    try {
         console.log("Session expired email function called");
-        if(!data.userEmail){
+        if (!data.userEmail) {
             throw new Error("userEmail is required for session expired email");
         }
         const transporter = createTransporter();
@@ -567,7 +569,7 @@ export const sendSessionExpiredForPayment = async(data)=>{
         const result = await transporter.sendMail(mailOptions);
         console.log("Session expired email sent successfully:", result.messageId);
         return result;
-    }catch(error){
+    } catch (error) {
         console.error("Error sending session expired email:", error);
         throw error;
     }

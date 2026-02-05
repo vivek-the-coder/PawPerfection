@@ -1,21 +1,18 @@
-import { connect } from 'mongoose';
+import 'dotenv/config';
 import express, { json, urlencoded } from 'express';
 const app = express();
-import { config } from 'dotenv';
-config();
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import passport from './utils/passport.js';
+import prisma from './db/prisma.js';
 import helmet from 'helmet';
-
 
 // Redis 
 import redisClient from "./caches/redis.js";
 import { authRateLimiter, paymentRateLimiter } from './caches/rate-limitter.js';
 
 
-// import auth from './middleware/auth';
 import userRoutes from './routes/userRoutes.js';
 import petRoutes from './routes/petRoute.js';
 import trainingRoutes from './routes/trainingRoutes.js';
@@ -25,10 +22,9 @@ import webhookRoutes from './webhook/stripe.webhook.js';
 import emailTestRoutes from './routes/emailTest.js';
 
 
-
-// Check if MONGODB_URI is defined
-if (!process.env.MONGODB_URI) {
-    console.error('MONGODB_URI is not defined in environment variables');
+// Check if DATABASE_URL is defined
+if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL is not defined in environment variables');
     process.exit(1);
 }
 
@@ -43,24 +39,19 @@ if (!process.env.SESSION_SECRET) {
     console.warn('SESSION_SECRET is not defined, using JWT_SECRET for session (not recommended for production)');
 }
 
-// Check if JWT_REFRESH_SECRET is defined (optional, will use JWT_SECRET if not provided)
-if (!process.env.JWT_REFRESH_SECRET) {
-    console.warn('JWT_REFRESH_SECRET is not defined, using JWT_SECRET for refresh tokens');
-}
-
 // Check if email configuration is defined
 if (!process.env.SMTP_EMAIL || !process.env.SMTP_PASSWORD) {
     console.warn('SMTP_EMAIL or SMTP_PASSWORD is not defined - email functionality will not work');
 }
 
-// Check if FRONTEND_URL is defined
-if (!process.env.FRONTEND_URL) {
-    console.warn('FRONTEND_URL is not defined - email links may not work properly');
-}
-
-
 // Mount webhook BEFORE body parsers to preserve raw body for signature verification
 app.use('/api/webhook', webhookRoutes);
+
+// Debug logging middleware
+app.use((req, res, next) => {
+    console.log(`[REQUEST] ${req.method} ${req.url}`);
+    next();
+});
 
 app.use(json());
 app.use(helmet());
@@ -89,16 +80,6 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Connect to MongoDB with error handling
-connect(process.env.MONGODB_URI)
-    .then(() => {
-        console.log("Connected to Database");
-    })
-    .catch((error) => {
-        console.error("MongoDB connection error:", error);
-        process.exit(1);
-    });
-
 // Rate Limiting
 app.set("trust proxy", 1);
 app.use(authRateLimiter);
@@ -119,8 +100,7 @@ app.use('/api/feedback', feedBackRoutes);
 app.use('/api/payment', paymentRateLimiter, paymentRoutes);
 app.use('/api/email-test', emailTestRoutes);
 
-const PORT = process.env.PORT
-
+const PORT = process.env.PORT || 3000;
 
 // Export app for Vercel
 export default app;
@@ -137,12 +117,22 @@ async function StartServer() {
             await redisClient.connect().catch(err => console.warn("Redis connection failed", err));
         }
 
-        app.listen(PORT || 3000, () => {
-            console.log(`Server is running on port http://localhost:${PORT || 3000}`);
+        // Connect to Database (Prisma)
+        try {
+            await prisma.$connect();
+            console.log("Connected to Database");
+        } catch (dbError) {
+            console.error("Database connection failed", dbError);
+            process.exit(1);
+        }
+
+        app.listen(PORT, () => {
+            console.log(`Server is running on port http://localhost:${PORT}`);
         });
 
     }
     catch (error) {
         console.error("Server start error", error)
+        try { await prisma.$disconnect(); } catch (e) { }
     }
 }

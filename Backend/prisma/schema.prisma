@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  password     String?
+  googleId     String?   @unique
+  name         String?
+  refreshToken String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  pets         Pet[]
+  payments     Payment[]
+}
+
+model Pet {
+  id          String   @id @default(uuid())
+  name        String
+  breed       String
+  age         Int
+  gender      String
+  description String
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Training {
+  id        String    @id @default(uuid())
+  week      Int
+  title     String
+  task      String[]
+  resources String[]
+  price     Float
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  payments  Payment[]
+}
+
+model Payment {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  paymentId         String   @default("pending")
+  trainingProgramId String
+  training          Training @relation(fields: [trainingProgramId], references: [id])
+  price             Float
+  status            String   @default("pending")
+  paymentOrderId    String   @default("pending")
+  paymentMethod     String   @default("card")
+  paymentDate       DateTime @default(now())
+  paymentStatus     String   @default("pending")
+  paymentCurrency   String   @default("INR")
+  idempotencyKey    String?  @unique
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Feedback {
+  id        String   @id @default(uuid())
+  email     String
+  message   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

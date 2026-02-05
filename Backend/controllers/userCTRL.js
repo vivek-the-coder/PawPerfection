@@ -1,22 +1,23 @@
-import User from "../models/user.js";
+import prisma from '../db/prisma.js';
 import { hash, compare } from "bcrypt";
 import { generateTokens, verifyRefreshToken } from "../utils/jwtUtils.js";
-import { sendLoginNotificationEmail } from "../utils/emailService.js"
-
-import { userValidationSchema, loginValidationSchema } from "../validations/signup.validations.js"
+import { sendLoginNotificationEmail } from "../utils/emailService.js";
+import { userValidationSchema, loginValidationSchema } from "../validations/signup.validations.js";
 
 export const createUser = async (req, res) => {
   try {
     // Validate input using Zod schema
+    console.log("Creating user with body:", req.body);
     const validateResult = userValidationSchema.safeParse(req.body);
     if (!validateResult.success) {
       const errors = validateResult.error.errors.map(err => err.message);
+      console.log("Validation failed:", errors);
       return res.status(400).json({ msg: "Validation failed", errors });
     }
 
     const { email, password } = req.body;
 
-    const existingUser = await User.findOne({ email });
+    const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(400).json({ msg: "User already exists" });
     }
@@ -24,28 +25,36 @@ export const createUser = async (req, res) => {
     const hashedPassword = await hash(password, 10);
 
     // Create user first
-    const newUser = await User.create({
-      email,
-      password: hashedPassword
+    const newUser = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword
+      }
     });
 
     // Generate tokens for the new user
-    const { accessToken, refreshToken } = generateTokens(newUser._id);
+    const { accessToken, refreshToken } = generateTokens(newUser.id);
 
     // Update user with refresh token
-    await User.findByIdAndUpdate(newUser._id, { refreshToken: refreshToken });
+    await prisma.user.update({
+      where: { id: newUser.id },
+      data: { refreshToken: refreshToken }
+    });
 
     return res.status(201).json({
       msg: "User created successfully",
       accessToken: accessToken,
       refreshToken: refreshToken,
       user: {
-        id: newUser._id,
+        id: newUser.id,
         email: newUser.email,
       },
     });
   } catch (error) {
     console.error("User creation error:", error);
+    import('fs').then(fs => {
+      fs.appendFileSync('error.log', `[${new Date().toISOString()}] User creation error: ${error.name}: ${error.message} \nStack: ${error.stack}\n`);
+    });
     return res.status(500).json({ msg: "User creation failed" });
   }
 };
@@ -60,7 +69,7 @@ export const loginUser = async (req, res) => {
 
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(400).json({ msg: "Invalid credentials" });
     }
@@ -72,10 +81,13 @@ export const loginUser = async (req, res) => {
     }
 
     // Generate new tokens
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    const { accessToken, refreshToken } = generateTokens(user.id);
 
     // Update user's refresh token in database
-    await User.findByIdAndUpdate(user._id, { refreshToken: refreshToken });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken: refreshToken }
+    });
 
     // Send login notification email
     try {
@@ -98,7 +110,7 @@ export const loginUser = async (req, res) => {
       accessToken: accessToken,
       refreshToken: refreshToken,
       user: {
-        id: user._id,
+        id: user.id,
         email: user.email,
       },
     });
@@ -116,7 +128,10 @@ export const logoutUser = async (req, res) => {
       // Clear refresh token from database
       const decoded = verifyRefreshToken(refreshToken);
       if (decoded) {
-        await User.findByIdAndUpdate(decoded.id, { refreshToken: null });
+        await prisma.user.update({
+          where: { id: decoded.id },
+          data: { refreshToken: null }
+        });
       }
     }
 
@@ -149,23 +164,26 @@ export const refreshToken = async (req, res) => {
     }
 
     // Check if user exists and token matches
-    const user = await User.findById(decoded.id);
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
     if (!user || user.refreshToken !== refreshToken) {
       return res.status(401).json({ msg: "Invalid refresh token" });
     }
 
     // Generate new tokens
-    const { accessToken: newAccessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
+    const { accessToken: newAccessToken, refreshToken: newRefreshToken } = generateTokens(user.id);
 
     // Update refresh token in database
-    await User.findByIdAndUpdate(user._id, { refreshToken: newRefreshToken });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken: newRefreshToken }
+    });
 
     return res.status(200).json({
       msg: "Token refreshed successfully",
       accessToken: newAccessToken,
       refreshToken: newRefreshToken,
       user: {
-        id: user._id,
+        id: user.id,
         email: user.email,
       },
     });
@@ -178,19 +196,21 @@ export const refreshToken = async (req, res) => {
 // Get current user profile
 export const getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password -refreshToken');
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id }
+      // select: { password: false, refreshToken: false } // Prisma handles select differently
+    });
+    // Manual exclusion or adjust query
     if (!user) {
       return res.status(404).json({ msg: "User not found" });
     }
 
+    // Remove sensitive fields manually or via select
+    const { password, refreshToken, ...userProfile } = user;
+
     return res.status(200).json({
       msg: "Profile retrieved successfully",
-      user: {
-        id: user._id,
-        email: user.email,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }
+      user: userProfile
     });
   } catch (error) {
     console.error("Get profile error:", error);
@@ -209,10 +229,16 @@ export const googleAuthCallback = async (req, res) => {
     }
 
     // Generate JWT tokens for the authenticated user
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    const { accessToken, refreshToken } = generateTokens(user._id || user.id);
+    // Passport user object might still have _id if from Mongoose strategy? 
+    // Wait, passport config needs update too? Assuming ID is available.
 
     // Update user's refresh token in database
-    await User.findByIdAndUpdate(user._id, { refreshToken: refreshToken });
+    await prisma.user.update({
+      where: { id: user.id || user._id },
+      data: { refreshToken: refreshToken }
+    });
+
 
     // Send login notification email for Google OAuth login
     try {
@@ -232,7 +258,7 @@ export const googleAuthCallback = async (req, res) => {
 
     // Redirect to frontend with tokens as URL parameters
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const redirectUrl = `${frontendUrl}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}&userId=${user._id}&email=${encodeURIComponent(user.email)}`;
+    const redirectUrl = `${frontendUrl}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}&userId=${user.id || user._id}&email=${encodeURIComponent(user.email)}`;
     res.redirect(redirectUrl);
 
   } catch (error) {

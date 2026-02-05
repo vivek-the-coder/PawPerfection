@@ -1,16 +1,13 @@
 import express from 'express';
 import { stripe } from '../utils/payment.js';
-import Payment from '../models/payment.js';
-import Training from '../models/trainingProgram.js';
-import User from '../models/user.js';
-import { sendPaymentConfirmationEmail, sendPaymentCancellationEmail ,sendSessionExpiredForPayment} from '../utils/emailService.js';
-
+import { sendPaymentConfirmationEmail, sendPaymentCancellationEmail, sendSessionExpiredForPayment } from '../utils/emailService.js';
+import prisma from '../db/prisma.js';
 const router = express.Router();
 
 // Health check endpoint for webhook
 router.get('/health', (req, res) => {
-    res.json({ 
-        status: 'ok', 
+    res.json({
+        status: 'ok',
         message: 'Webhook endpoint is healthy',
         timestamp: new Date().toISOString()
     });
@@ -20,7 +17,7 @@ router.get('/health', (req, res) => {
 router.post('/test-payment-email', async (req, res) => {
     try {
         const { userEmail, userName, courseTitle, courseWeek, courseId, amount, paymentId } = req.body;
-        
+
         if (!userEmail) {
             return res.status(400).json({ error: 'userEmail is required' });
         }
@@ -38,8 +35,8 @@ router.post('/test-payment-email', async (req, res) => {
             paymentDate: new Date()
         });
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: 'Payment confirmation email sent successfully',
             userEmail: userEmail
         });
@@ -53,7 +50,7 @@ router.post('/test-payment-email', async (req, res) => {
 router.post('/test-cancellation-email', async (req, res) => {
     try {
         const { userEmail, userName, courseTitle, courseWeek, amount, reason } = req.body;
-        
+
         if (!userEmail) {
             return res.status(400).json({ error: 'userEmail is required' });
         }
@@ -69,8 +66,8 @@ router.post('/test-cancellation-email', async (req, res) => {
             reason: reason || 'Test cancellation'
         });
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: 'Payment cancellation email sent successfully',
             userEmail: userEmail
         });
@@ -84,7 +81,7 @@ router.post('/test-cancellation-email', async (req, res) => {
 router.post('/debug-trigger', async (req, res) => {
     try {
         const { sessionId, eventType } = req.body;
-        
+
         if (!sessionId) {
             return res.status(400).json({ error: 'Session ID is required' });
         }
@@ -93,7 +90,7 @@ router.post('/debug-trigger', async (req, res) => {
 
         // Retrieve the session from Stripe
         const session = await stripe.checkout.sessions.retrieve(sessionId);
-        
+
         if (!session) {
             return res.status(404).json({ error: 'Session not found' });
         }
@@ -110,8 +107,8 @@ router.post('/debug-trigger', async (req, res) => {
                 return res.status(400).json({ error: 'Invalid event type' });
         }
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: `Manually triggered ${eventType || 'checkout.session.completed'}`,
             sessionId: sessionId
         });
@@ -125,7 +122,7 @@ router.post('/debug-trigger', async (req, res) => {
 router.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     console.log('Webhook endpoint hit - Headers:', req.headers);
     console.log('Webhook endpoint hit - Body length:', req.body?.length);
-    
+
     const sig = req.headers['stripe-signature'];
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -178,18 +175,21 @@ router.post('/stripe-webhook', express.raw({ type: 'application/json' }), async 
 async function handlePaymentSuccess(session) {
     try {
         console.log('Payment successful for session:', session.id);
-        
-        // Find the payment record using multiple possible identifiers
-        let payment = await Payment.findOne({ paymentId: session.id })
-            .populate('userId')
-            .populate('trainingProgramId');
 
-        // If not found by paymentId, try by paymentOrderId
-        if (!payment) {
-            payment = await Payment.findOne({ paymentOrderId: session.id })
-                .populate('userId')
-                .populate('trainingProgramId');
-        }
+        // Find the payment record using multiple possible identifiers
+        // Prisma doesn't support $or in findFirst easily for same level fields like Mongoose's findOne({ $or: [] }) 
+        // effectively without explicit boolean logic, but findFirst with OR is supported.
+        let payment = await prisma.payment.findFirst({
+            where: {
+                OR: [
+                    { paymentId: session.id },
+                    { paymentOrderId: session.id }
+                ]
+            },
+            include: { user: true, training: true } // Relation names in schema
+        });
+
+        // Prisma result is null if not found
 
         if (!payment) {
             console.error('Payment record not found for session:', session.id);
@@ -197,34 +197,38 @@ async function handlePaymentSuccess(session) {
         }
 
         // Update payment status
-        const updatedPayment = await Payment.findByIdAndUpdate(payment._id, {
-            status: 'completed',
-            paymentStatus: 'completed',
-            paymentMethod: session.payment_method_types?.[0] || 'card',
-            paymentOrderId: session.id,
-            paymentCurrency: session.currency?.toUpperCase() || 'INR',
-            paymentDate: new Date()
-        }, { new: true });
+        const updatedPayment = await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+                status: 'completed',
+                paymentStatus: 'completed',
+                paymentMethod: session.payment_method_types?.[0] || 'card',
+                paymentOrderId: session.id,
+                paymentCurrency: session.currency?.toUpperCase() || 'INR',
+                paymentDate: new Date()
+            },
+            include: { user: true, training: true }
+        });
 
         // Send confirmation email
         try {
             await sendPaymentConfirmationEmail({
-                userEmail: payment.userId.email,
-                userName: payment.userId.name || payment.userId.email.split('@')[0],
-                courseTitle: payment.trainingProgramId.title,
-                courseWeek: payment.trainingProgramId.week,
-                courseId: payment.trainingProgramId._id,
+                userEmail: payment.user.email,
+                userName: payment.user.name || payment.user.email.split('@')[0],
+                courseTitle: payment.training.title,
+                courseWeek: payment.training.week,
+                courseId: payment.training.id,
                 amount: payment.price,
-                paymentId: payment._id,
+                paymentId: payment.id,
                 paymentDate: new Date()
             });
-            console.log('Payment confirmation email sent to:', payment.userId.email);
+            console.log('Payment confirmation email sent to:', payment.user.email);
         } catch (emailError) {
             console.error('Failed to send confirmation email:', emailError);
             // Don't fail the webhook if email fails
         }
 
-        console.log('Payment successfully processed:', payment._id);
+        console.log('Payment successfully processed:', payment.id);
     } catch (error) {
         console.error('Error handling payment success:', error);
         throw error; // Re-throw to trigger webhook retry
@@ -236,59 +240,61 @@ async function handlePaymentExpired(session) {
     try {
         console.log('Payment session expired for session:', session.id);
 
-        let payment = await Payment.findOne({ paymentId: session.id })
-            .populate('userId')
-            .populate('trainingProgramId');
-
-        // If not found by paymentId, try by paymentOrderId
-        if (!payment) {
-            payment = await Payment.findOne({ paymentOrderId: session.id })
-                .populate('userId')
-                .populate('trainingProgramId');
-        }
+        let payment = await prisma.payment.findFirst({
+            where: {
+                OR: [
+                    { paymentId: session.id },
+                    { paymentOrderId: session.id }
+                ]
+            },
+            include: { user: true, training: true }
+        });
 
         if (!payment) {
             console.error('Payment record not found for expired session:', session.id);
             return;
         }
-        try{
+        try {
             await sendSessionExpiredForPayment({
-                userEmail: payment.userId.email,
-                userName: payment.userId.name || payment.userId.email.split('@')[0],
-                courseTitle: payment.trainingProgramId.title,
-                courseWeek: payment.trainingProgramId.week,
+                userEmail: payment.user.email,
+                userName: payment.user.name || payment.user.email.split('@')[0],
+                courseTitle: payment.training.title,
+                courseWeek: payment.training.week,
                 amount: payment.price,
                 reason: 'Payment session expired'
             });
-            console.log('Session expired email sent to:', payment.userId.email);
-        }catch(emailError){
+            console.log('Session expired email sent to:', payment.user.email);
+        } catch (emailError) {
             console.error('Failed to send session expired email:', emailError);
         }
 
         // Update payment status
-        await Payment.findByIdAndUpdate(payment._id, {
-            status: 'expired',
-            paymentStatus: 'expired',
-            paymentOrderId: session.id,
-            paymentCurrency: session.currency?.toUpperCase() || 'INR'
+        await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+                status: 'expired',
+                paymentStatus: 'expired',
+                paymentOrderId: session.id,
+                paymentCurrency: session.currency?.toUpperCase() || 'INR'
+            }
         });
 
         // Send cancellation email
         try {
             await sendPaymentCancellationEmail({
-                userEmail: payment.userId.email,
-                userName: payment.userId.name || payment.userId.email.split('@')[0],
-                courseTitle: payment.trainingProgramId.title,
-                courseWeek: payment.trainingProgramId.week,
+                userEmail: payment.user.email,
+                userName: payment.user.name || payment.user.email.split('@')[0],
+                courseTitle: payment.training.title,
+                courseWeek: payment.training.week,
                 amount: payment.price,
                 reason: 'Payment session expired'
             });
-            console.log('Payment expiration email sent to:', payment.userId.email);
+            console.log('Payment expiration email sent to:', payment.user.email);
         } catch (emailError) {
             console.error('Failed to send expiration email:', emailError);
         }
 
-        console.log('Payment expiration processed:', payment._id);
+        console.log('Payment expiration processed:', payment.id);
     } catch (error) {
         console.error('Error handling payment expiration:', error);
         throw error; // Re-throw to trigger webhook retry
@@ -300,12 +306,15 @@ async function handlePaymentFailed(paymentIntent) {
     try {
         console.log('Payment failed for payment intent:', paymentIntent.id);
 
-        const payment = await Payment.findOne({
-            $or: [
-                { paymentOrderId: paymentIntent.id },
-                { paymentId: paymentIntent.id }
-            ]
-        }).populate('userId').populate('trainingProgramId');
+        const payment = await prisma.payment.findFirst({
+            where: {
+                OR: [
+                    { paymentId: paymentIntent.id },
+                    { paymentOrderId: paymentIntent.id }
+                ]
+            },
+            include: { user: true, training: true }
+        });
 
         if (!payment) {
             console.error('Payment record not found for failed payment intent:', paymentIntent.id);
@@ -313,29 +322,32 @@ async function handlePaymentFailed(paymentIntent) {
         }
 
         // Update payment status
-        await Payment.findByIdAndUpdate(payment._id, {
-            status: 'failed',
-            paymentStatus: 'failed',
-            paymentOrderId: paymentIntent.id,
-            paymentCurrency: paymentIntent.currency?.toUpperCase() || 'INR'
+        await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+                status: 'failed',
+                paymentStatus: 'failed',
+                paymentOrderId: paymentIntent.id,
+                paymentCurrency: paymentIntent.currency?.toUpperCase() || 'INR'
+            }
         });
 
         // Send cancellation email
         try {
             await sendPaymentCancellationEmail({
-                userEmail: payment.userId.email,
-                userName: payment.userId.name || payment.userId.email.split('@')[0],
-                courseTitle: payment.trainingProgramId.title,
-                courseWeek: payment.trainingProgramId.week,
+                userEmail: payment.user.email,
+                userName: payment.user.name || payment.user.email.split('@')[0],
+                courseTitle: payment.training.title,
+                courseWeek: payment.training.week,
                 amount: payment.price,
                 reason: 'Payment failed'
             });
-            console.log('Payment failure email sent to:', payment.userId.email);
+            console.log('Payment failure email sent to:', payment.user.email);
         } catch (emailError) {
             console.error('Failed to send failure email:', emailError);
         }
 
-        console.log('Payment failure processed:', payment._id);
+        console.log('Payment failure processed:', payment.id);
     } catch (error) {
         console.error('Error handling payment failure:', error);
         throw error; // Re-throw to trigger webhook retry
@@ -347,12 +359,15 @@ async function handlePaymentCanceled(paymentIntent) {
     try {
         console.log('Payment canceled for payment intent:', paymentIntent.id);
 
-        const payment = await Payment.findOne({
-            $or: [
-                { paymentOrderId: paymentIntent.id },
-                { paymentId: paymentIntent.id }
-            ]
-        }).populate('userId').populate('trainingProgramId');
+        const payment = await prisma.payment.findFirst({
+            where: {
+                OR: [
+                    { paymentId: paymentIntent.id },
+                    { paymentOrderId: paymentIntent.id }
+                ]
+            },
+            include: { user: true, training: true }
+        });
 
         if (!payment) {
             console.error('Payment record not found for canceled payment intent:', paymentIntent.id);
@@ -360,29 +375,32 @@ async function handlePaymentCanceled(paymentIntent) {
         }
 
         // Update payment status
-        await Payment.findByIdAndUpdate(payment._id, {
-            status: 'canceled',
-            paymentStatus: 'canceled',
-            paymentOrderId: paymentIntent.id,
-            paymentCurrency: paymentIntent.currency?.toUpperCase() || 'INR'
+        await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+                status: 'canceled',
+                paymentStatus: 'canceled',
+                paymentOrderId: paymentIntent.id,
+                paymentCurrency: paymentIntent.currency?.toUpperCase() || 'INR'
+            }
         });
 
         // Send cancellation email
         try {
             await sendPaymentCancellationEmail({
-                userEmail: payment.userId.email,
-                userName: payment.userId.name || payment.userId.email.split('@')[0],
-                courseTitle: payment.trainingProgramId.title,
-                courseWeek: payment.trainingProgramId.week,
+                userEmail: payment.user.email,
+                userName: payment.user.name || payment.user.email.split('@')[0],
+                courseTitle: payment.training.title,
+                courseWeek: payment.training.week,
                 amount: payment.price,
                 reason: 'Payment canceled by user'
             });
-            console.log('Payment cancellation email sent to:', payment.userId.email);
+            console.log('Payment cancellation email sent to:', payment.user.email);
         } catch (emailError) {
             console.error('Failed to send cancellation email:', emailError);
         }
 
-        console.log('Payment cancellation processed:', payment._id);
+        console.log('Payment cancellation processed:', payment.id);
     } catch (error) {
         console.error('Error handling payment cancellation:', error);
         throw error; // Re-throw to trigger webhook retry
@@ -394,12 +412,15 @@ async function handlePaymentIntentSucceeded(paymentIntent) {
     try {
         console.log('Payment intent succeeded:', paymentIntent.id);
 
-        const payment = await Payment.findOne({
-            $or: [
-                { paymentOrderId: paymentIntent.id },
-                { paymentId: paymentIntent.id }
-            ]
-        }).populate('userId').populate('trainingProgramId');
+        const payment = await prisma.payment.findFirst({
+            where: {
+                OR: [
+                    { paymentId: paymentIntent.id },
+                    { paymentOrderId: paymentIntent.id }
+                ]
+            },
+            include: { user: true, training: true }
+        });
 
         if (!payment) {
             console.error('Payment record not found for payment intent:', paymentIntent.id);
@@ -408,33 +429,36 @@ async function handlePaymentIntentSucceeded(paymentIntent) {
 
         // Only update if not already completed
         if (payment.status !== 'completed') {
-            await Payment.findByIdAndUpdate(payment._id, {
-                status: 'completed',
-                paymentStatus: 'completed',
-                paymentOrderId: paymentIntent.id,
-                paymentCurrency: paymentIntent.currency?.toUpperCase() || 'INR',
-                paymentDate: new Date()
+            await prisma.payment.update({
+                where: { id: payment.id },
+                data: {
+                    status: 'completed',
+                    paymentStatus: 'completed',
+                    paymentOrderId: paymentIntent.id,
+                    paymentCurrency: paymentIntent.currency?.toUpperCase() || 'INR',
+                    paymentDate: new Date()
+                }
             });
 
             // Send confirmation email
             try {
                 await sendPaymentConfirmationEmail({
-                    userEmail: payment.userId.email,
-                    userName: payment.userId.name || payment.userId.email.split('@')[0],
-                    courseTitle: payment.trainingProgramId.title,
-                    courseWeek: payment.trainingProgramId.week,
-                    courseId: payment.trainingProgramId._id,
+                    userEmail: payment.user.email,
+                    userName: payment.user.name || payment.user.email.split('@')[0],
+                    courseTitle: payment.training.title,
+                    courseWeek: payment.training.week,
+                    courseId: payment.training.id,
                     amount: payment.price,
-                    paymentId: payment._id,
+                    paymentId: payment.id,
                     paymentDate: new Date()
                 });
-                console.log('Payment confirmation email sent to:', payment.userId.email);
+                console.log('Payment confirmation email sent to:', payment.user.email);
             } catch (emailError) {
                 console.error('Failed to send confirmation email:', emailError);
             }
         }
 
-        console.log('Payment intent successfully processed:', payment._id);
+        console.log('Payment intent successfully processed:', payment.id);
     } catch (error) {
         console.error('Error handling payment intent success:', error);
         throw error; // Re-throw to trigger webhook retry

@@ -1,4 +1,4 @@
-import Pet from '../models/petModel.js';
+import prisma from '../db/prisma.js';
 
 const createPet = async (req, res) => {
     try {
@@ -14,18 +14,21 @@ const createPet = async (req, res) => {
         if (!breed)
             return res.status(400).json({ msg: "Breed cannot be empty" });
 
-        const pet = await Pet.create({
-            name,
-            breed,
-            age,
-            gender,
-            description,
-            userId: req.user._id // Associate pet with user
+        const pet = await prisma.pet.create({
+            data: {
+                name,
+                breed,
+                age: Number(age),
+                gender,
+                description,
+                userId: req.user.id || req.user._id // Handle both potential id locations
+            }
         });
+
         return res.status(201).json({
             msg: "Pet created successfully",
             pet: {
-                _id: pet._id,
+                _id: pet.id, // Prisma uses 'id', mapping to '_id' for frontend compatibility if needed
                 name: pet.name,
                 breed: pet.breed,
                 age: pet.age,
@@ -42,11 +45,14 @@ const createPet = async (req, res) => {
 
 const getAllPets = async (req, res) => {
     try {
-        const pets = await Pet.find({ userId: req.user._id });
+        const pets = await prisma.pet.findMany({
+            where: { userId: req.user.id || req.user._id }
+        });
+
         return res.status(200).json({
             msg: "Pets retrieved successfully",
             pets: pets.map(pet => ({
-                _id: pet._id,
+                _id: pet.id,
                 name: pet.name,
                 breed: pet.breed,
                 age: pet.age,
@@ -64,20 +70,24 @@ const getAllPets = async (req, res) => {
 const getPets = async (req, res) => {
     try {
         const { id } = req.params;
-        const pet = await Pet.findById(id);
+        const pet = await prisma.pet.findUnique({
+            where: { id: id }
+        });
+
         if (!pet) {
             return res.status(404).json({ msg: "Pet not found" });
         }
-        
+
         // Check if the pet belongs to the authenticated user
-        if (pet.userId.toString() !== req.user._id.toString()) {
+        const userId = req.user.id || req.user._id;
+        if (pet.userId !== userId) {
             return res.status(403).json({ msg: "Access denied. This pet doesn't belong to you." });
         }
-        
+
         return res.status(200).json({
             msg: "Pet found successfully",
             pet: {
-                _id: pet._id,
+                _id: pet.id,
                 name: pet.name,
                 breed: pet.breed,
                 age: pet.age,
@@ -96,32 +106,37 @@ const editPet = async (req, res) => {
     try {
         const { id } = req.params;
         const { name, breed, age, gender, description } = req.body;
+
+        // Basic Validation
         if (!name || !breed || !age || !gender || !description)
             return res.status(400).json({ msg: "Please enter all fields" });
-        if (age < 0)
-            return res.status(400).json({ msg: "Age cannot be negative or zero" });
-        if (!description)
-            return res.status(400).json({ msg: "Description cannot be empty" });
-        if (!gender)
-            return res.status(400).json({ msg: "Gender cannot be empty" });
-        if (!breed)
-            return res.status(400).json({ msg: "Breed cannot be empty" });
-            
-        // Check if pet exists and belongs to user
-        const existingPet = await Pet.findById(id);
+
+        // Check availability and ownership
+        const existingPet = await prisma.pet.findUnique({ where: { id: id } });
         if (!existingPet) {
             return res.status(404).json({ msg: "Pet not found" });
         }
-        
-        if (existingPet.userId.toString() !== req.user._id.toString()) {
+
+        const userId = req.user.id || req.user._id;
+        if (existingPet.userId !== userId) {
             return res.status(403).json({ msg: "Access denied. This pet doesn't belong to you." });
         }
-        
-        const pet = await Pet.findByIdAndUpdate(id, { name, breed, age, gender, description }, { new: true });
+
+        const pet = await prisma.pet.update({
+            where: { id: id },
+            data: {
+                name,
+                breed,
+                age: Number(age),
+                gender,
+                description
+            }
+        });
+
         return res.status(200).json({
             msg: "Pet edited successfully",
             pet: {
-                _id: pet._id,
+                _id: pet.id,
                 name: pet.name,
                 breed: pet.breed,
                 age: pet.age,
@@ -139,18 +154,19 @@ const editPet = async (req, res) => {
 const deletePet = async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Check if pet exists and belongs to user
-        const pet = await Pet.findById(id);
+        const pet = await prisma.pet.findUnique({ where: { id: id } });
         if (!pet) {
             return res.status(404).json({ msg: "Pet not found" });
         }
-        
-        if (pet.userId.toString() !== req.user._id.toString()) {
+
+        const userId = req.user.id || req.user._id;
+        if (pet.userId !== userId) {
             return res.status(403).json({ msg: "Access denied. This pet doesn't belong to you." });
         }
-        
-        await Pet.findByIdAndDelete(id);
+
+        await prisma.pet.delete({ where: { id: id } });
         return res.status(200).json({ msg: "Pet deleted successfully" });
     }
     catch (error) {

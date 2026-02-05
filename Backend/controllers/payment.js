@@ -1,7 +1,6 @@
-import Payment from "../models/payment.js"
-import Training from "../models/trainingProgram.js"
 import { stripe } from "../utils/payment.js"
 import { sendPaymentConfirmationEmail } from "../utils/emailService.js"
+import prisma from '../db/prisma.js';
 
 if (!stripe) {
     throw new Error("Stripe is not defined")
@@ -29,7 +28,7 @@ export const createPayment = async (req, res) => {
         }
 
         // Check if training program exists
-        const trainingProgram = await Training.findById(trainingProgramId);
+        const trainingProgram = await prisma.training.findUnique({ where: { id: trainingProgramId } });
         if (!trainingProgram) {
             return res.status(404).json({
                 msg: "Training program not found",
@@ -44,10 +43,14 @@ export const createPayment = async (req, res) => {
             : `http://${rawFrontendUrl}`;
 
         // Check if user has already purchased this course
-        const existingPurchase = await Payment.findOne({
-            userId: req.user._id,
-            trainingProgramId: trainingProgramId,
-            status: 'completed'
+        const userId = req.user.id || req.user._id;
+
+        const existingPurchase = await prisma.payment.findFirst({
+            where: {
+                userId: userId,
+                trainingProgramId: trainingProgramId,
+                status: 'completed'
+            }
         });
 
         if (existingPurchase) {
@@ -55,7 +58,7 @@ export const createPayment = async (req, res) => {
                 msg: "You have already purchased this training program",
                 success: false,
                 data: {
-                    paymentId: existingPurchase._id,
+                    paymentId: existingPurchase.id,
                     purchased: true
                 }
             });
@@ -63,36 +66,40 @@ export const createPayment = async (req, res) => {
 
         // Check for idempotency key collision
         if (idempotencyKey) {
-            const existingPayment = await Payment.findOne({ idempotencyKey, userId: req.user._id });
+            const existingPayment = await prisma.payment.findFirst({
+                where: {
+                    idempotencyKey: idempotencyKey,
+                    userId: userId
+                }
+            });
             if (existingPayment) {
-                console.log('Idempotency hit: Returning existing payment', existingPayment._id);
+                console.log('Idempotency hit: Returning existing payment', existingPayment.id);
                 // If we have a session ID, we could verify it's still valid, but for now return existing data
                 return res.status(200).json({
                     msg: "Payment already exists (Idempotent)",
                     success: true,
                     data: {
-                        paymentId: existingPayment._id,
+                        paymentId: existingPayment.id,
                         sessionId: existingPayment.paymentId !== 'pending' ? existingPayment.paymentId : undefined,
-                        // We might not have the URL if it wasn't saved or if we don't fetch from Stripe, 
-                        // but if the user is retrying, they might need the URL.
-                        // Ideally we should retrieve the session from Stripe if we have the ID.
                     }
                 });
             }
         }
 
         // Create payment record
-        const payment = await Payment.create({
-            price,
-            trainingProgramId,
-            userId: req.user._id,
-            paymentId: "pending",
-            status: "pending",
-            paymentOrderId: "pending",
-            paymentMethod: "card",
-            paymentStatus: "pending",
-            paymentCurrency: "INR",
-            idempotencyKey: idempotencyKey
+        const payment = await prisma.payment.create({
+            data: {
+                price,
+                trainingProgramId,
+                userId: userId,
+                paymentId: "pending",
+                status: "pending",
+                paymentOrderId: "pending",
+                paymentMethod: "card",
+                paymentStatus: "pending",
+                paymentCurrency: "INR",
+                idempotencyKey: idempotencyKey || undefined // Explicitly undefined if null/empty to avoid unique constraint if schema allows nulls but we want to be safe
+            }
         })
 
         // Create Stripe checkout session
@@ -122,8 +129,8 @@ export const createPayment = async (req, res) => {
                 success_url: `${frontendUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
                 cancel_url: `${frontendUrl}/payment/cancel`,
                 metadata: {
-                    paymentId: payment._id.toString(),
-                    userId: req.user._id.toString(),
+                    paymentId: payment.id,
+                    userId: userId,
                     trainingProgramId: trainingProgramId
                 },
                 customer_email: req.user.email,
@@ -151,16 +158,19 @@ export const createPayment = async (req, res) => {
         }
 
         // Update payment record with session details
-        await Payment.findByIdAndUpdate(payment._id, {
-            paymentOrderId: session.id,
-            paymentId: session.id
+        await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+                paymentOrderId: session.id,
+                paymentId: session.id
+            }
         })
 
         return res.status(201).json({
             msg: "Payment created successfully",
             success: true,
             data: {
-                paymentId: payment._id,
+                paymentId: payment.id,
                 sessionId: session.id,
                 url: session.url
             }
@@ -187,9 +197,13 @@ export const getPayment = async (req, res) => {
             })
         }
 
-        const payment = await Payment.findById(paymentId)
-            .populate('userId', 'name email')
-            .populate('trainingProgramId', 'title week description price')
+        const payment = await prisma.payment.findUnique({
+            where: { id: paymentId },
+            include: {
+                user: true, // Need to select partial fields ideally, but prisma returns whole obj.
+                training: true
+            }
+        });
 
         if (!payment) {
             return res.status(404).json({
@@ -199,17 +213,36 @@ export const getPayment = async (req, res) => {
         }
 
         // Check if user is authorized to view this payment
-        if (payment.userId._id.toString() !== req.user._id.toString()) {
+        const userId = req.user.id || req.user._id;
+        if (payment.userId !== userId) {
             return res.status(403).json({
                 msg: "Unauthorized to view this payment",
                 success: false
             })
         }
 
+        // Filter out sensitive user data manually if needed or just return relevant parts
+        // Mapping to match previous response structure if possible
+        const userMin = { name: payment.user.name, email: payment.user.email };
+        const trainingMin = {
+            title: payment.training.title,
+            week: payment.training.week,
+            description: payment.training.description || "", // Check schema for description
+            price: payment.training.price
+        };
+
+        // Construct response object resembling populate result
+        const responseData = {
+            ...payment,
+            userId: userMin,
+            trainingProgramId: trainingMin
+        };
+
+
         return res.status(200).json({
             msg: "Payment fetched successfully",
             success: true,
-            data: payment
+            data: responseData
         })
     }
     catch (error) {
@@ -224,14 +257,29 @@ export const getPayment = async (req, res) => {
 
 export const getUserPayments = async (req, res) => {
     try {
-        const payments = await Payment.find({ userId: req.user._id })
-            .populate('trainingProgramId', 'title week description')
-            .sort({ createdAt: -1 })
+        const userId = req.user.id || req.user._id;
+        const payments = await prisma.payment.findMany({
+            where: { userId: userId },
+            include: {
+                training: true
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        // Map to match frontend expectations (trainingProgramId field was populated)
+        const mappedPayments = payments.map(p => ({
+            ...p,
+            trainingProgramId: {
+                title: p.training.title,
+                week: p.training.week,
+                description: "", // Schema check missing
+            }
+        }));
 
         return res.status(200).json({
             msg: "User payments fetched successfully",
             success: true,
-            data: payments
+            data: mappedPayments
         })
     } catch (error) {
         console.error("Get user payments error:", error);
@@ -268,9 +316,10 @@ export const verifyPayment = async (req, res) => {
         }
 
         // Find the payment record
-        const payment = await Payment.findOne({ paymentId: sessionId })
-            .populate('userId', 'name email')
-            .populate('trainingProgramId', 'title week description')
+        const payment = await prisma.payment.findFirst({
+            where: { paymentId: sessionId },
+            include: { user: true, training: true }
+        });
 
         if (!payment) {
             return res.status(404).json({
@@ -280,7 +329,8 @@ export const verifyPayment = async (req, res) => {
         }
 
         // Check if user is authorized
-        if (payment.userId._id.toString() !== req.user._id.toString()) {
+        const userId = req.user.id || req.user._id;
+        if (payment.userId !== userId) {
             return res.status(403).json({
                 msg: "Unauthorized to verify this payment",
                 success: false
@@ -291,33 +341,32 @@ export const verifyPayment = async (req, res) => {
         if (session.payment_status === 'paid' && payment.status === 'pending') {
             console.log('Updating payment status from pending to completed');
 
-            await Payment.findByIdAndUpdate(payment._id, {
-                status: 'completed',
-                paymentStatus: 'completed',
-                paymentMethod: session.payment_method_types?.[0] || 'card',
-                paymentOrderId: session.id,
-                paymentCurrency: session.currency?.toUpperCase() || 'INR',
-                paymentDate: new Date()
+            const updatedPayment = await prisma.payment.update({
+                where: { id: payment.id },
+                data: {
+                    status: 'completed',
+                    paymentStatus: 'completed',
+                    paymentMethod: session.payment_method_types?.[0] || 'card',
+                    paymentOrderId: session.id, // Ensure this matches schema field
+                    paymentCurrency: session.currency?.toUpperCase() || 'INR',
+                    paymentDate: new Date()
+                },
+                include: { user: true, training: true }
             });
-
-            // Refresh the payment data
-            const updatedPayment = await Payment.findById(payment._id)
-                .populate('userId', 'name email')
-                .populate('trainingProgramId', 'title week description');
 
             // Send confirmation email
             try {
                 await sendPaymentConfirmationEmail({
-                    userEmail: updatedPayment.userId.email,
-                    userName: updatedPayment.userId.name || updatedPayment.userId.email.split('@')[0],
-                    courseTitle: updatedPayment.trainingProgramId.title,
-                    courseWeek: updatedPayment.trainingProgramId.week,
-                    courseId: updatedPayment.trainingProgramId._id,
+                    userEmail: updatedPayment.user.email,
+                    userName: updatedPayment.user.name || updatedPayment.user.email.split('@')[0],
+                    courseTitle: updatedPayment.training.title,
+                    courseWeek: updatedPayment.training.week,
+                    courseId: updatedPayment.training.id,
                     amount: updatedPayment.price,
-                    paymentId: updatedPayment._id,
+                    paymentId: updatedPayment.id,
                     paymentDate: new Date()
                 });
-                console.log('Payment confirmation email sent to:', updatedPayment.userId.email);
+                console.log('Payment confirmation email sent to:', updatedPayment.user.email);
             } catch (emailError) {
                 console.error('Failed to send confirmation email:', emailError);
                 // Don't fail the verification if email fails
@@ -406,4 +455,3 @@ export const testStripe = async (req, res) => {
         })
     }
 }
-

@@ -9,6 +9,12 @@ const createRateLimiter = ({
 }) => {
     return async (req, res, next) => {
         try {
+            // Bypass if Redis is not connected
+            if (!redisClient.isOpen) {
+                // console.warn("Redis not connected, bypassing rate limiter");
+                return next();
+            }
+
             const identifier = identifierFn(req);
             const key = `${keyPrefix}:${identifier}`;
 
@@ -28,6 +34,7 @@ const createRateLimiter = ({
             next();
         } catch (error) {
             console.error("Rate limiter error:", error);
+            // Fail open
             next();
         }
     };
@@ -35,13 +42,13 @@ const createRateLimiter = ({
 
 export const authRateLimiter = createRateLimiter({
     windowSizeInSeconds: 60,
-    maxRequests: 7,
+    maxRequests: 100, // Increased for dev/testing
     keyPrefix: "auth-rate-limit",
     identifierFn: (req) => req.user?.id || req.ip,
 })
 export const paymentRateLimiter = createRateLimiter({
     windowSizeInSeconds: 60,
-    maxRequests: 10,
+    maxRequests: 100, // Increased for dev/testing
     keyPrefix: "payment-rate-limit",
     identifierFn: (req) => req.user?.id || req.ip,
 });

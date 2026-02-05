@@ -1,0 +1,12 @@
+﻿[2026-02-05T20:49:03.486Z] User creation error: ReferenceError: userValidationSchema is not defined 
+Stack: ReferenceError: userValidationSchema is not defined
+    at createUser (file:///C:/Users/HP/Pictures/PawPerfection-main/Backend/controllers/userCTRL.js:7:28)
+    at Layer.handleRequest (C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\lib\layer.js:152:17)
+    at next (C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\lib\route.js:157:13)
+    at Route.dispatch (C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\lib\route.js:117:3)
+    at handle (C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\index.js:435:11)
+    at Layer.handleRequest (C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\lib\layer.js:152:17)
+    at C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\index.js:295:15
+    at processParams (C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\index.js:582:12)
+    at next (C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\index.js:291:5)
+    at Function.handle (C:\Users\HP\Pictures\PawPerfection-main\Backend\node_modules\router\index.js:186:3)

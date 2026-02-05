@@ -1,4 +1,4 @@
-import FeedBack from "../models/feedBack.js";
+import prisma from '../db/prisma.js';
 
 const createFeedBack = async (req, res) => {
     try {
@@ -6,26 +6,28 @@ const createFeedBack = async (req, res) => {
         if (!email || !message) {
             return res.status(400).json({ msg: "Please enter all fields" });
         }
-        
+
         // Email validation
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             return res.status(400).json({ msg: "Please provide a valid email address" });
         }
-        
+
         if (message.length > 100) {
             return res.status(400).json({ msg: "Message cannot be longer than 100 characters" });
         }
-        
-        const feedBack = await FeedBack.create({
-            email,
-            message
+
+        const feedBack = await prisma.feedback.create({
+            data: {
+                email,
+                message
+            }
         });
-        
+
         return res.status(201).json({
             msg: "Feedback created successfully",
             feedBack: {
-                _id: feedBack._id,
+                _id: feedBack.id,
                 email: feedBack.email,
                 message: feedBack.message
             }
@@ -40,20 +42,20 @@ const createFeedBack = async (req, res) => {
 const getFeedBacks = async (req, res) => {
     try {
         const { email } = req.query; // Changed from req.body to req.query for GET request
-        
+
         if (!email) {
             return res.status(400).json({ msg: "Email parameter is required" });
         }
-        
-        const feedBacks = await FeedBack.find({ email });
+
+        const feedBacks = await prisma.feedback.findMany({ where: { email } });
         if (!feedBacks || feedBacks.length === 0) {
             return res.status(404).json({ msg: "No feedback found for this email" });
         }
-        
+
         return res.status(200).json({
             msg: "Feedbacks found successfully",
             feedBacks: feedBacks.map(feedback => ({
-                _id: feedback._id,
+                _id: feedback.id,
                 email: feedback.email,
                 message: feedback.message,
                 createdAt: feedback.createdAt

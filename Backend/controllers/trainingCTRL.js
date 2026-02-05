@@ -1,44 +1,54 @@
-import Training from "../models/trainingProgram.js";
-
+import prisma from '../db/prisma.js';
 
 export const createTrainingProgram = async (req, res) => {
   try {
     const { week, title, task, resources, price } = req.body;
     console.log(req.body);
-    if (!week || !title || !task || !resources || !price)
+    if (!week || !title || !task || !resources || (price === undefined))
       return res
         .status(400)
         .json({ msg: "Cant create Task", success: false });
+
     //normalize Title
     const normalizeTitle = title;
-    // check is the same exist
+
     if (price < 0)
       return res
         .status(400)
         .json({ msg: "Price can't be negative", success: false });
 
-    const existingTraining = await Training.findOne({
-      week,
-      title: normalizeTitle,
-      task,
-      resources,
-      price,
+    // Check if training already exists
+    const existingTraining = await prisma.training.findFirst({
+      where: {
+        week: Number(week),
+        title: normalizeTitle,
+        price: Number(price)
+        // Note: Prisma array comparison is strict, so we might skip exact array matching for existence check simplicity
+        // or we rely on week+title uniqueness if that's the business rule.
+        // Using week+title for now.
+      }
     });
+
     if (existingTraining)
       return res.status(409).json({ msg: "Already Exist", success: false });
 
-    const trainingModel = new Training({
-      week,
-      title: normalizeTitle,
-      task,
-      resources,
-      price,
+    const trainingModel = await prisma.training.create({
+      data: {
+        week: Number(week),
+        title: normalizeTitle,
+        task: task, // Assumed to be string[]
+        resources: resources, // Assumed to be string[]
+        price: Number(price),
+      }
     });
-    await trainingModel.save();
+
     return res.status(201).json({
       msg: "Program created Successfully",
       success: true,
-      trainingModel,
+      trainingModel: {
+        ...trainingModel,
+        _id: trainingModel.id // Map id back to _id
+      },
     });
   } catch (error) {
     console.log(error);
@@ -47,6 +57,7 @@ export const createTrainingProgram = async (req, res) => {
       .json({ msg: "Can't create Program", success: false });
   }
 }
+
 export const updateTrainingProgram = async (req, res) => {
   try {
     const { trainingId } = req.params;
@@ -61,24 +72,29 @@ export const updateTrainingProgram = async (req, res) => {
     }
 
     // Update the training program with the provided fields
-    const updatedTrainingModel = await Training.findByIdAndUpdate(
-      trainingId,
-      { task, title, week, resources, price },
-      { new: true }
-    );
+    try {
+      const updatedTrainingModel = await prisma.training.update({
+        where: { id: trainingId },
+        data: { task, title, week, resources, price }
+      });
 
-    // If the training program doesn't exist
-    if (!updatedTrainingModel) {
-      return res
-        .status(404)
-        .json({ msg: "Training program not found.", success: false });
+      return res.status(200).json({
+        msg: "Training program updated successfully.",
+        success: true,
+        updatedTrainingModel: {
+          ...updatedTrainingModel,
+          _id: updatedTrainingModel.id
+        },
+      });
+    } catch (err) {
+      if (err.code === 'P2025') {
+        return res
+          .status(404)
+          .json({ msg: "Training program not found.", success: false });
+      }
+      throw err;
     }
 
-    return res.status(200).json({
-      msg: "Training program updated successfully.",
-      success: true,
-      updatedTrainingModel,
-    });
   } catch (error) {
     console.log(error);
     return res.status(500).json({
@@ -87,17 +103,25 @@ export const updateTrainingProgram = async (req, res) => {
     });
   }
 }
+
 export const deleteTrainingProgram = async (req, res) => {
   try {
     const { trainingId } = req.params;
-    const deleteTrainingModel = await Training.findByIdAndDelete({
-      trainingId,
-    });
-    if (!deleteTrainingModel)
-      return res
-        .status(400)
-        .json({ msg: "no training model Exist", success: false });
-    return res.status(200).json({ msg: "Model deleted", success: true });
+
+    try {
+      await prisma.training.delete({
+        where: { id: trainingId },
+      });
+      return res.status(200).json({ msg: "Model deleted", success: true });
+    } catch (err) {
+      if (err.code === 'P2025') {
+        return res
+          .status(400) // Original code returned 400 for not found on delete
+          .json({ msg: "no training model Exist", success: false });
+      }
+      throw err;
+    }
+
   } catch (error) {
     console.log(error);
     return res
@@ -105,19 +129,20 @@ export const deleteTrainingProgram = async (req, res) => {
       .json({ msg: "can't delete the model", success: false });
   }
 }
+
 export const getTrainingPrograms = async (req, res) => {
   try {
-    const trainingPrograms = await Training.find();
+    const trainingPrograms = await prisma.training.findMany();
     if (trainingPrograms.length === 0) {
       return res
-        .status(404)
-        .json({ msg: "No training programs found.", success: false });
+        .status(200)
+        .json({ msg: "No training programs found.", success: true, trainingPrograms: [] });
     }
 
     return res.status(200).json({
       msg: "Training programs fetched successfully.",
       success: true,
-      trainingPrograms,
+      trainingPrograms: trainingPrograms.map(t => ({ ...t, _id: t.id })),
     });
   } catch (error) {
     console.log(error);
@@ -127,24 +152,24 @@ export const getTrainingPrograms = async (req, res) => {
     });
   }
 }
+
 export const getTrainingProgramBtID = async (req, res) => {
   try {
     const { id } = req.params;
-    const trainingModel = await Training.findById(id);
+    const trainingModel = await prisma.training.findUnique({ where: { id } });
 
     if (!trainingModel)
       return res
         .status(404)
         .json({ msg: "Can't find the model", success: false });
+
     return res.status(200).json({
       msg: "Training program fetched successfully.",
       success: true,
-      trainingProgram: trainingModel,
+      trainingProgram: { ...trainingModel, _id: trainingModel.id },
     });
   } catch (error) {
     console.log(error);
     return res.status(500).json({ msg: "Can't find the Model" });
   }
 }
-
-// export default trainingCTRL;
