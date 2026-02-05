@@ -110,21 +110,26 @@ if (process.env.NODE_ENV !== 'production' || process.env.VERCEL !== '1') {
     StartServer();
 }
 
+// Export connection function for Serverless
+export async function connectServices() {
+    // Connect to Redis only if URL is provided
+    if (process.env.REDIS_URL && !redisClient.isOpen) {
+        await redisClient.connect().catch(err => console.warn("Redis connection failed", err));
+    }
+
+    // Connect to Database (Prisma lazy connects, but we log it)
+    try {
+        // Only log if not already connected? Prisma manages internal state.
+        console.log("Database Service Ready");
+    } catch (dbError) {
+        console.error("Database connection failed", dbError);
+    }
+}
+
 async function StartServer() {
     try {
-        // Connect to Redis only if URL is provided
-        if (process.env.REDIS_URL) {
-            await redisClient.connect().catch(err => console.warn("Redis connection failed", err));
-        }
-
-        // Connect to Database (Prisma)
-        try {
-            await prisma.$connect();
-            console.log("Connected to Database");
-        } catch (dbError) {
-            console.error("Database connection failed", dbError);
-            process.exit(1);
-        }
+        await connectServices();
+        await prisma.$connect(); // Explicit connect for local server log
 
         app.listen(PORT, () => {
             console.log(`Server is running on port http://localhost:${PORT}`);
