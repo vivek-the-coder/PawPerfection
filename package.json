@@ -1,6 +1,7 @@
 {
     "name": "paw-perfection-monorepo",
     "version": "1.0.0",
+    "type": "module",
     "scripts": {
         "build": "cd Frontend/client && npm install --include=dev && npm run build -- --outDir ../../public",
         "postinstall": "cd Backend && npm install && npx prisma generate",
