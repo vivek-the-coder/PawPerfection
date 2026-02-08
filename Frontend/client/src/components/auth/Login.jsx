@@ -156,7 +156,7 @@ const Login = () => {
   type="button"
   onClick={() => {
     // Directing the flow to the production Render backend
-    window.location.href = "https://pawperfection.onrender.com/api/user/google";
+    window.location.href = "https://pawperfection.onrender.com/api/auth/google";
   }}
   className="cursor-pointer w-full py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-gray-700 font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors flex items-center justify-center"
 >
