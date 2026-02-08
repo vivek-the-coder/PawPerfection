@@ -1,25 +1,17 @@
+// Backend/routes/userRoutes.js
 import { Router } from 'express';
-const router = Router();
-import { createUser, loginUser, logoutUser, refreshToken, getProfile, googleAuthCallback } from '../controllers/userCTRL.js';
-import auth from '../middleware/auth.js';
+import { googleAuthCallback } from '../controllers/userCTRL.js';
 import passport from 'passport';
 
-// Public routes
-router.post('/register', createUser);
-router.post('/login', loginUser);
-router.post('/logout', logoutUser);
-router.post('/refresh-token', refreshToken);
+const router = Router();
 
-
-
-// Google OAuth routes
+// Step 1: Initiates the Google OAuth flow
 router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+// Step 2: Google redirects back here. This MUST match the Google Console URI exactly.
 router.get('/google/callback',
   passport.authenticate('google', { failureRedirect: '/login' }),
   googleAuthCallback
 );
 
-// Protected routes
-router.get('/profile', auth, getProfile);
-
-export default router
+export default router;
