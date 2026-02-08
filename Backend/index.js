@@ -100,7 +100,7 @@ app.use('/api/feedback', feedBackRoutes);
 app.use('/api/payment', paymentRateLimiter, paymentRoutes);
 app.use('/api/email-test', emailTestRoutes);
 
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
 // Export app for Vercel
 export default app;
